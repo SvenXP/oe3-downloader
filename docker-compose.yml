@@ -1,0 +1,9 @@
+services:
+  oe3-downloader:
+    build: .
+    container_name: oe3-downloader
+    volumes:
+      - ./output:/output        # MP3s and songs.json land here on the host
+    environment:
+      - MP3_OUTPUT_DIR=/output
+    restart: "no"               # run once; use "unless-stopped" + a scheduler if you want recurring runs
