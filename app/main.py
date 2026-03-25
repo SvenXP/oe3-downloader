@@ -197,13 +197,13 @@ def get_YT_URL(songs):
             sinterpret = sanitize_filename(interpret)
             
             # Download mit yt-dlp
-            mp3_name_template = os.path.join(full_path, f"{stitel}-{sinterpret}.%(ext)s")
+            # mp3_name_template = os.path.join(full_path, f"{stitel}-{sinterpret}.%(ext)s")
             mp3_name = os.path.join(full_path, f"{stitel}-{sinterpret}.mp3")
             
             cmd = [
                 "yt-dlp",
                 "--extract-audio", "--audio-format", "mp3", "--audio-quality", "0",
-                "-o", mp3_name_template,
+                "-o", mp3_name,
                 yt_url
             ]
             print(f"⬇️ Lade {titel} - {interpret} ...")
