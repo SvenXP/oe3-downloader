@@ -2,7 +2,6 @@ FROM selenium/standalone-chrome:latest
 
 USER root
 
-# Install Python, pip, ffmpeg (needed by yt-dlp for audio conversion)
 RUN apt-get update && apt-get install -y \
     python3 python3-pip ffmpeg \
     && rm -rf /var/lib/apt/lists/*
