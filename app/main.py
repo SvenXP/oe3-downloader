@@ -180,8 +180,36 @@ def sanitize_filename(name):
     # Ungültig sind: < > : " / \ | ? *
     return re.sub(r'[<>:"/\\|?*]', '_', name)
 
+def send_email(new_songs):
+    email_to = os.environ.get("EMAIL_TO", "sven@schaider.net")
+    
+    if not new_songs:
+        subject = "Ö3 Downloader: Keine neuen Songs"
+        body = "Es wurden keine neuen Songs heruntergeladen."
+    else:
+        subject = f"Ö3 Downloader: {len(new_songs)} neue Songs"
+        body = "Folgende Songs wurden heruntergeladen:\n\n"
+        body += "\n".join([f"- {titel} - {interpret}" for titel, interpret in new_songs])
+    
+    message = f"To: {email_to}\nSubject: {subject}\n\n{body}"
+    
+    try:
+        result = subprocess.run(
+            ["ssmtp", email_to],
+            input=message,
+            capture_output=True,
+            text=True
+        )
+        if result.returncode == 0:
+            print(f"📧 E-Mail gesendet an {email_to}")
+        else:
+            print(f"❌ E-Mail Fehler: {result.stderr}")
+    except Exception as e:
+        print(f"❌ E-Mail Fehler: {e}")
+
 def get_YT_URL(songs):
     ydl_opts = {'quiet': True, 'extract_flat': True}
+    new_songs = []
 
     for titel, interpret in songs:
         if not check_song_in_db(titel, interpret):
@@ -213,7 +241,9 @@ def get_YT_URL(songs):
 
             if os.path.exists(mp3_name):
                 set_MP3_Tags(mp3_name, titel, interpret)
+    return new_songs
 
 songs = get_songs()
-get_YT_URL(songs)
+new_songs = get_YT_URL(songs)
+send_email(new_songs)
 print("\nAlle Downloads fertig")
