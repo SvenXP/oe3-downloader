@@ -241,6 +241,8 @@ def get_YT_URL(songs):
 
             if os.path.exists(mp3_name):
                 set_MP3_Tags(mp3_name, titel, interpret)
+                new_songs.append((titel,interpret))
+
     return new_songs
 
 songs = get_songs()
