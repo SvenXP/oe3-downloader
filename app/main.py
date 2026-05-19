@@ -1,6 +1,6 @@
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from mutagen.id3 import ID3, TIT2, TPE1, GRP1, TALB, TDRC, TPE2, APIC, error
+from mutagen.id3 import ID3, TIT2, TPE1, TPE2, GRP1, TALB, TDRC, TDOR, TSOP, TSO2, TPOS, TRCK, TMED, TXXX, APIC, error
 from bs4 import BeautifulSoup
 import time
 import re
@@ -106,15 +106,46 @@ def set_MP3_Tags(mp3_name, titel, interpret):
                 tags.add(TDRC(encoding=3, text=mb_data['release_date'][:4]))
             if mb_data.get('album_artist'):
                 tags.add(TPE2(encoding=3, text=mb_data['album_artist']))
+            if mb_data.get('artist_sort'):
+                tags.add(TSOP(encoding=3, text=mb_data['artist_sort']))
+                tags.add(TSO2(encoding=3, text=mb_data['artist_sort']))
+            disc_num = mb_data.get('disc_number')
+            total_discs = mb_data.get('total_discs') or mb_data.get('disc_count')
+            if disc_num and total_discs:
+                tags.add(TPOS(encoding=3, text=f"{disc_num}/{total_discs}"))
+            elif disc_num:
+                tags.add(TPOS(encoding=3, text=str(disc_num)))
+            total_tracks = mb_data.get('total_tracks') or mb_data.get('track_count')
+            if total_tracks:
+                tags.add(TRCK(encoding=3, text=str(total_tracks)))
+            if mb_data.get('media'):
+                tags.add(TMED(encoding=3, text=mb_data['media']))
+            if mb_data.get('original_release_date'):
+                tags.add(TDOR(encoding=3, text=mb_data['original_release_date']))
+            if mb_data.get('release_country'):
+                tags.add(TXXX(encoding=3, desc='RELEASECOUNTRY', text=mb_data['release_country']))
+            if mb_data.get('release_status'):
+                tags.add(TXXX(encoding=3, desc='RELEASESTATUS', text=mb_data['release_status']))
+            if mb_data.get('release_type'):
+                tags.add(TXXX(encoding=3, desc='RELEASETYPE', text=mb_data['release_type']))
 
             try:
+                cover_data = None
                 if mb_data.get('mbid_release'):
-                    cover_data = musicbrainzngs.get_image_front(mb_data['mbid_release'], size=500)
-                elif mb_data.get('cover_url'):
-                    with urllib.request.urlopen(mb_data['cover_url']) as r:
-                        cover_data = r.read()
-                else:
-                    cover_data = None
+                    try:
+                        cover_data = musicbrainzngs.get_image_front(mb_data['mbid_release'], size=500)
+                    except Exception:
+                        print(f"⚠️ Kein MusicBrainz-Cover, versuche iTunes...")
+
+                if not cover_data:
+                    cover_url = mb_data.get('cover_url')
+                    if not cover_url:
+                        itunes = get_itunes_data(titel, interpret)
+                        cover_url = itunes.get('cover_url') if itunes else None
+                    if cover_url:
+                        with urllib.request.urlopen(cover_url) as r:
+                            cover_data = r.read()
+
                 if cover_data:
                     tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Front Cover', data=cover_data))
             except Exception as e:
@@ -128,51 +159,75 @@ def set_MP3_Tags(mp3_name, titel, interpret):
     except Exception as e:
         print(f"❌ Fehler beim Taggen von {titel}: {e}")
 
+COMPILATION_TYPES = {'compilation', 'soundtrack', 'mixtape/street', 'dj-mix'}
+
+def is_compilation(rel):
+    rg = rel.get('release-group', {})
+    rg_type = rg.get('type', '').lower()
+    sec_types = [s.lower() for s in rg.get('secondary-type-list', [])]
+    return rg_type in COMPILATION_TYPES or any(t in COMPILATION_TYPES for t in sec_types)
+
+def find_best_release(recordings):
+    best = None
+    for rec in recordings:
+        for rel in rec.get('release-list', []):
+            if is_compilation(rel):
+                continue
+            if rel.get('cover-art-archive', {}).get('artwork', 'false') == 'true':
+                return rel
+            if not best:
+                best = rel
+    return best
+
 def get_musicbrainz_data(titel, interpret):
     try:
-        # Escaping für Sonderzeichen in der Suche
         safe_titel = sanitize_filename(titel)
         safe_interpret = sanitize_filename(interpret)
-        
-        # 1. Wir suchen nach SINGLES (ohne caa:true Zwang in der Query)
-        query = f'recording:"{safe_titel}" AND artist:"{safe_interpret}" AND type:single'
-        
-        print(f"🔍 Suche nach Single: {query}")
-        result = musicbrainzngs.search_recordings(query=query, limit=20)
-        
+
+        print(f"🔍 Suche nach Single: {titel}")
+        result = musicbrainzngs.search_recordings(
+            query=f'recording:"{safe_titel}" AND artist:"{safe_interpret}" AND type:single', limit=20)
         recordings = result.get('recording-list', [])
-        if not recordings:
-            print(f"❌ Keine Single gefunden für: {titel}")
+        best_release = find_best_release(recordings)
+
+        if not best_release:
+            print(f"ℹ️ Keine Single gefunden, suche Album: {titel}")
+            result = musicbrainzngs.search_recordings(
+                query=f'recording:"{safe_titel}" AND artist:"{safe_interpret}" AND type:album', limit=20)
+            recordings = result.get('recording-list', [])
+            best_release = find_best_release(recordings)
+
+        if not best_release:
+            print(f"❌ Keine MusicBrainz-Daten gefunden für: {titel}")
             return None
 
-        best_release = None
-        
-        # 2. Wir priorisieren innerhalb der Ergebnisse die mit Bild
-        for rec in recordings:
-            for rel in rec.get('release-list', []):
-                has_art = rel.get('cover-art-archive', {}).get('artwork', 'false') == 'true'
-                if has_art:
-                    best_release = rel
-                    break
-            if best_release: break
-
-        # 3. FALLBACK: Wenn keine Single mit Bild da ist, nimm die allererste Single aus der Liste
-        if not best_release:
-            for rec in recordings:
-                if rec.get('release-list'):
-                    best_release = rec['release-list'][0]
-                    print(f"ℹ️ Single gefunden, aber leider ohne Cover-Art bei MusicBrainz.")
-                    break
-
-        if not best_release: return None
-
-        return {
+        mbid = best_release['id']
+        data = {
             'album': best_release.get('title'),
             'release_date': best_release.get('date', ''),
             'album_artist': best_release.get('artist-credit', [{}])[0].get('artist', {}).get('name', interpret),
-            'mbid_release': best_release['id'],
-            'release_type': 'single'
+            'mbid_release': mbid,
         }
+
+        try:
+            detail = musicbrainzngs.get_release_by_id(mbid, includes=['artist-credits', 'media', 'release-groups'])['release']
+            artist_credit = detail.get('artist-credit', [{}])
+            if artist_credit:
+                data['artist_sort'] = artist_credit[0].get('artist', {}).get('sort-name', '')
+            medium = detail.get('medium-list', [{}])[0]
+            data['disc_number'] = medium.get('position', '')
+            data['total_discs'] = detail.get('medium-count', '')
+            data['total_tracks'] = medium.get('track-count', '')
+            data['media'] = medium.get('format', '')
+            data['release_country'] = detail.get('country', '')
+            data['release_status'] = detail.get('status', '')
+            rg = detail.get('release-group', {})
+            data['release_type'] = rg.get('primary-type', '')
+            data['original_release_date'] = rg.get('first-release-date', '')
+        except Exception as e:
+            print(f"⚠️ MusicBrainz Detailabruf fehlgeschlagen: {e}")
+
+        return data
     except Exception as e:
         print(f"❌ MusicBrainz Fehler: {e}")
         return None
@@ -195,7 +250,12 @@ def get_itunes_data(titel, interpret):
             'album': hit.get('collectionName'),
             'release_date': hit.get('releaseDate', '')[:4],
             'album_artist': hit.get('artistName', interpret),
-            'cover_url': cover_url
+            'cover_url': cover_url,
+            'track_count': hit.get('trackCount'),
+            'disc_number': hit.get('discNumber'),
+            'disc_count': hit.get('discCount'),
+            'release_country': hit.get('country'),
+            'release_type': hit.get('collectionType'),
         }
     except Exception as e:
         print(f"❌ iTunes Fehler: {e}")
