@@ -2,3 +2,6 @@ output/
 *.mp3
 .env
 ssmtp.conf
+.claude/
+.vscode/
+build/
