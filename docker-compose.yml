@@ -2,9 +2,12 @@ services:
   oe3-downloader:
     build: .
     container_name: oe3-downloader
+    env_file:
+      - .env
     volumes:
-      - ./output:/output        # MP3s and songs.json land here on the host
-      - /etc/ssmtp/ssmtp.conf:/etc/ssmtp/ssmtp.conf:ro
+      - ./output:/output
+      - ${SSMTP_CONF_PATH}:/etc/ssmtp/ssmtp.conf:ro
     environment:
-      - MP3_OUTPUT_DIR=/output
+      - MP3_OUTPUT_DIR=${MP3_OUTPUT_DIR}
+      - EMAIL_TO=${EMAIL_TO}
     restart: "no"               # run once; use "unless-stopped" + a scheduler if you want recurring runs

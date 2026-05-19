@@ -1,3 +1,4 @@
 output/
 *.mp3
 .env
+ssmtp.conf
