@@ -1,0 +1,13 @@
+{
+    "name": "oe3-downloader",
+    "description": "Project oe3-downloader",
+    "toolkit": "basic",
+    "sources": [
+        "src/main.bas"
+    ],
+    "build": "debug",
+    "definitions": [],
+    "includes": [],
+    "args": [],
+    "compiler": ""
+}

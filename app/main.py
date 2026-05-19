@@ -8,6 +8,8 @@ import subprocess
 import os
 import yt_dlp
 import json
+import urllib.request
+import urllib.parse
 import musicbrainzngs
 
 musicbrainzngs.set_rate_limit(limit_or_interval=1.0, new_requests=1)
@@ -26,14 +28,6 @@ def load_songs_db():
     except FileNotFoundError:
         return set()
     
-def check_song_in_db(titel, interpret):
-    entry = f"{titel}|{interpret}"
-    downloaded = load_songs_db()
-    if entry in downloaded:
-        print(f"⏭️ Bereits vorhanden: {titel} - {interpret}")
-        return False
-    else:
-        return True
 
 def save_song(titel, interpret):
     entry = f"{titel}|{interpret}"
@@ -59,7 +53,7 @@ def get_songs():
     
     songs = []
     
-    url = f"{base_url}"
+    url = base_url
     print(f"🔍 {url}")
     driver.get(url)
     time.sleep(4)
@@ -78,7 +72,6 @@ def get_songs():
             titel = titel_elem.text.strip()
             interpret = interpret_elem.text.strip()            
             songs.append((titel, interpret))
-            #print(f"⭐ {titel} - {interpret}")
     return songs
 
 
@@ -94,28 +87,38 @@ def set_MP3_Tags(mp3_name, titel, interpret):
             # Falls gar kein Header da ist
             tags = ID3()
 
+        tags.delall('TSSE')
+
         # Basis-Informationen setzen
         tags.add(TIT2(encoding=3, text=titel))
         tags.add(TPE1(encoding=3, text=interpret))
         tags.add(GRP1(encoding=3, text=["Ö3 Hörercharts"]))
         
-        # MusicBrainz Daten abrufen
         mb_data = get_musicbrainz_data(titel, interpret)
+        if not mb_data:
+            print(f"ℹ️ Fallback auf iTunes für: {titel}")
+            mb_data = get_itunes_data(titel, interpret)
+
         if mb_data:
-            if mb_data.get('album'): 
+            if mb_data.get('album'):
                 tags.add(TALB(encoding=3, text=mb_data['album']))
-            if mb_data.get('release_date'): 
+            if mb_data.get('release_date'):
                 tags.add(TDRC(encoding=3, text=mb_data['release_date'][:4]))
-            if mb_data.get('album_artist'): 
+            if mb_data.get('album_artist'):
                 tags.add(TPE2(encoding=3, text=mb_data['album_artist']))
-            
-            # Cover einbetten (falls vorhanden)
+
             try:
-                # Hier nehmen wir die Daten direkt von MusicBrainz
-                cover_data = musicbrainzngs.get_image_front(mb_data['mbid_release'], size=500)
-                tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Front Cover', data=cover_data))
-            except:
-                pass
+                if mb_data.get('mbid_release'):
+                    cover_data = musicbrainzngs.get_image_front(mb_data['mbid_release'], size=500)
+                elif mb_data.get('cover_url'):
+                    with urllib.request.urlopen(mb_data['cover_url']) as r:
+                        cover_data = r.read()
+                else:
+                    cover_data = None
+                if cover_data:
+                    tags.add(APIC(encoding=3, mime='image/jpeg', type=3, desc='Front Cover', data=cover_data))
+            except Exception as e:
+                print(f"⚠️ Cover konnte nicht geladen werden: {e}")
 
         # SPEICHERN: v2_version=3 ist der entscheidende Fix für Windows!
         tags.save(mp3_name, v2_version=3)
@@ -175,6 +178,29 @@ def get_musicbrainz_data(titel, interpret):
         return None
 
     
+def get_itunes_data(titel, interpret):
+    try:
+        query = urllib.parse.quote(f"{titel} {interpret}")
+        url = f"https://itunes.apple.com/search?term={query}&entity=song&limit=5"
+        with urllib.request.urlopen(url) as r:
+            data = json.loads(r.read())
+        results = data.get('results', [])
+        if not results:
+            print(f"❌ Keine iTunes-Daten gefunden für: {titel}")
+            return None
+        hit = results[0]
+        cover_url = hit.get('artworkUrl100', '').replace('100x100', '600x600')
+        print(f"✅ iTunes-Daten gefunden für: {titel}")
+        return {
+            'album': hit.get('collectionName'),
+            'release_date': hit.get('releaseDate', '')[:4],
+            'album_artist': hit.get('artistName', interpret),
+            'cover_url': cover_url
+        }
+    except Exception as e:
+        print(f"❌ iTunes Fehler: {e}")
+        return None
+
 def sanitize_filename(name):
     # Ersetzt alle für Windows ungültigen Zeichen durch ein Leerzeichen oder Unterstrich
     # Ungültig sind: < > : " / \ | ? *
@@ -191,7 +217,7 @@ def send_email(new_songs):
         body = "Folgende Songs wurden heruntergeladen:\n\n"
         body += "\n".join([f"- {titel} - {interpret}" for titel, interpret in new_songs])
     
-    message = f"To: {email_to}\nSubject: {subject}\n\n{body}"
+    message = f"From: {email_to}\nTo: {email_to}\nSubject: {subject}\n\n{body}"
     
     try:
         result = subprocess.run(
@@ -212,7 +238,9 @@ def get_YT_URL(songs):
     new_songs = []
 
     for titel, interpret in songs:
-        if not check_song_in_db(titel, interpret):
+        downloaded = load_songs_db()
+        if f"{titel}|{interpret}" in downloaded:
+            print(f"⏭️ Bereits vorhanden: {titel} - {interpret}")
             continue
         query = f"{titel} {interpret}"
         
